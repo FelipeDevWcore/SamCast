@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, PlusCircle, X, Edit2, Trash2, Play } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
-import type { Database } from '../../lib/types/supabasetypes';
 import { toast } from 'react-toastify';
+import { useAuth } from '../../context/AuthContext';
 
 import {
   DndContext,
@@ -22,12 +21,28 @@ import {
 
 import { CSS } from '@dnd-kit/utilities';
 
-const Playlists: React.FC = () => {
-  type PlaylistBase = Database['public']['Tables']['playlists']['Row'];
-  type Playlist = PlaylistBase & { quantidadeVideos?: number; duracaoTotal?: number };
-  type Folder = Database['public']['Tables']['folders']['Row'];
-  type Video = Database['public']['Tables']['videos']['Row'];
+interface Playlist {
+  id: number;
+  nome: string;
+  quantidadeVideos?: number;
+  duracaoTotal?: number;
+}
 
+interface Folder {
+  id: number;
+  nome: string;
+}
+
+interface Video {
+  id: number;
+  nome: string;
+  url?: string;
+  duracao?: number;
+  tamanho?: number;
+}
+
+const Playlists: React.FC = () => {
+  const { getToken } = useAuth();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,73 +70,110 @@ const Playlists: React.FC = () => {
   });
 
   const carregarPlaylists = async () => {
-    setStatus(null);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) return setStatus('Usuário não autenticado');
+    try {
+      setStatus(null);
+      const token = await getToken();
+      if (!token) {
+        setStatus('Usuário não autenticado');
+        return;
+      }
 
-    const { data: playlistsData } = await supabase
-      .from('playlists')
-      .select('*')
-      .eq('id_user', user.id);
+      const response = await fetch('/api/playlists', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    const playlistsComStats = await Promise.all(
-      (playlistsData || []).map(async (playlist) => {
-        const { data: playlistVideos } = await supabase
-          .from('playlist_videos')
-          .select('videos(duracao)')
-          .eq('id_playlist', playlist.id);
+      if (!response.ok) {
+        throw new Error('Erro ao carregar playlists');
+      }
 
-        const quantidadeVideos = playlistVideos?.length || 0;
+      const playlistsData = await response.json();
+      
+      // Carregar estatísticas para cada playlist
+      const playlistsComStats = await Promise.all(
+        playlistsData.map(async (playlist: Playlist) => {
+          try {
+            const videosResponse = await fetch(`/api/playlists/${playlist.id}/videos`, {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            });
 
-        const duracaoTotal = (playlistVideos || []).reduce((acc, item) => {
-          const videosField = (item as any).videos;
-          let duracao = 0;
-          if (Array.isArray(videosField)) {
-            duracao = Math.ceil(videosField[0]?.duracao ?? 0);
-          } else if (videosField && typeof videosField === 'object') {
-            duracao = Math.ceil(videosField.duracao ?? 0);
+            if (videosResponse.ok) {
+              const playlistVideos = await videosResponse.json();
+              const quantidadeVideos = playlistVideos.length;
+              const duracaoTotal = playlistVideos.reduce((acc: number, item: any) => {
+                const duracao = item.videos?.duracao || 0;
+                return acc + Math.ceil(duracao);
+              }, 0);
+
+              return { ...playlist, quantidadeVideos, duracaoTotal };
+            }
+          } catch (error) {
+            console.error(`Erro ao carregar vídeos da playlist ${playlist.id}:`, error);
           }
-          return acc + duracao;
-        }, 0);
 
-        return { ...playlist, quantidadeVideos, duracaoTotal };
-      })
-    );
+          return { ...playlist, quantidadeVideos: 0, duracaoTotal: 0 };
+        })
+      );
 
-    setPlaylists(playlistsComStats);
+      setPlaylists(playlistsComStats);
+    } catch (error) {
+      console.error('Erro ao carregar playlists:', error);
+      setStatus('Erro ao carregar playlists');
+    }
   };
 
   const carregarFoldersEVideos = async () => {
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-    if (error || !user) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
 
-    const { data: foldersData } = await supabase
-      .from('folders')
-      .select('*')
-      .eq('id_user', user.id)
-      .order('nome');
+      // Carregar folders
+      const foldersResponse = await fetch('/api/folders', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!foldersData) return;
-    setFolders(foldersData);
-    setExpandedFolders(Object.fromEntries(foldersData.map((f) => [f.id, false])));
+      if (!foldersResponse.ok) {
+        throw new Error('Erro ao carregar pastas');
+      }
 
-    const folderIds = foldersData.map((f) => f.id);
-    const { data: videosData } = await supabase
-      .from('videos')
-      .select('*')
-      .in('id_folder', folderIds)
-      .order('nome');
+      const foldersData = await foldersResponse.json();
+      setFolders(foldersData);
+      setExpandedFolders(Object.fromEntries(foldersData.map((f: Folder) => [f.id, false])));
 
-    const grouped: Record<number, Video[]> = {};
-    foldersData.forEach(f => grouped[f.id] = []);
-    (videosData || []).forEach(v => grouped[v.id_folder]?.push(v));
-    setVideosByFolder(grouped);
+      // Carregar vídeos para cada folder
+      const grouped: Record<number, Video[]> = {};
+      foldersData.forEach((f: Folder) => grouped[f.id] = []);
+
+      for (const folder of foldersData) {
+        try {
+          const videosResponse = await fetch(`/api/videos?folder_id=${folder.id}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (videosResponse.ok) {
+            const videosData = await videosResponse.json();
+            grouped[folder.id] = videosData;
+          }
+        } catch (error) {
+          console.error(`Erro ao carregar vídeos da pasta ${folder.id}:`, error);
+        }
+      }
+
+      setVideosByFolder(grouped);
+    } catch (error) {
+      console.error('Erro ao carregar pastas e vídeos:', error);
+    }
   };
 
   useEffect(() => {
@@ -131,15 +183,27 @@ const Playlists: React.FC = () => {
   const abrirModal = async (playlist?: Playlist) => {
     setStatus(null);
     await carregarFoldersEVideos();
+    
     if (playlist) {
       setNomePlaylist(playlist.nome ?? '');
       setEditingId(playlist.id);
-      const { data: selected } = await supabase
-        .from('playlist_videos')
-        .select('videos(*)')
-        .eq('id_playlist', playlist.id)
-        .order('ordem');
-      setSelectedVideos(selected?.map(item => (item as any).videos) || []);
+      
+      try {
+        const token = await getToken();
+        const response = await fetch(`/api/playlists/${playlist.id}/videos`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const selected = await response.json();
+          setSelectedVideos(selected.map((item: any) => item.videos));
+        }
+      } catch (error) {
+        console.error('Erro ao carregar vídeos da playlist:', error);
+      }
     } else {
       setNomePlaylist('');
       setEditingId(null);
@@ -151,35 +215,75 @@ const Playlists: React.FC = () => {
   const salvarPlaylist = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return setStatus('Usuário não autenticado');
-
+    
     try {
+      const token = await getToken();
+      if (!token) {
+        setStatus('Usuário não autenticado');
+        return;
+      }
+
       let playlistId = editingId;
 
       if (editingId) {
-        await supabase.from('playlists').update({ nome: nomePlaylist }).eq('id', editingId);
+        // Atualizar playlist existente
+        const response = await fetch(`/api/playlists/${editingId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            nome: nomePlaylist,
+            videos: selectedVideos.map((video, index) => ({
+              id: video.id,
+              ordem: index
+            }))
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Erro ao atualizar playlist');
+        }
       } else {
-        const { data } = await supabase
-          .from('playlists')
-          .insert({ nome: nomePlaylist, id_user: user.id })
-          .select('id')
-          .single();
-        playlistId = data?.id;
-      }
+        // Criar nova playlist
+        const response = await fetch('/api/playlists', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ nome: nomePlaylist }),
+        });
 
-      if (playlistId) {
-        await supabase.from('playlist_videos').delete().eq('id_playlist', playlistId);
+        if (!response.ok) {
+          throw new Error('Erro ao criar playlist');
+        }
 
-        const insertData = selectedVideos.map((video, index) => ({
-          id_playlist: playlistId,
-          id_video: video.id,
-          ordem: index,
-        }));
+        const data = await response.json();
+        playlistId = data.id;
 
-        await supabase.from('playlist_videos').insert(insertData);
+        // Adicionar vídeos à playlist
+        if (playlistId && selectedVideos.length > 0) {
+          const updateResponse = await fetch(`/api/playlists/${playlistId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              nome: nomePlaylist,
+              videos: selectedVideos.map((video, index) => ({
+                id: video.id,
+                ordem: index
+              }))
+            }),
+          });
+
+          if (!updateResponse.ok) {
+            throw new Error('Erro ao adicionar vídeos à playlist');
+          }
+        }
       }
 
       setShowModal(false);
@@ -187,8 +291,10 @@ const Playlists: React.FC = () => {
       setEditingId(null);
       setSelectedVideos([]);
       carregarPlaylists();
+      toast.success('Playlist salva com sucesso!');
     } catch (err: any) {
       setStatus(err.message || 'Erro ao salvar playlist');
+      toast.error(err.message || 'Erro ao salvar playlist');
     } finally {
       setLoading(false);
     }
@@ -209,15 +315,11 @@ const Playlists: React.FC = () => {
     if (!playlist) return;
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
+      const token = await getToken();
       const response = await fetch(`/api/playlists/${playlist.id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
       });
 
@@ -383,21 +485,30 @@ const Playlists: React.FC = () => {
     setPlaylistPlayerIndex(0);
     setVideoPlayerModalOpen(false);
 
-    const { data: playlistVideos, error } = await supabase
-      .from('playlist_videos')
-      .select('videos(*)')
-      .eq('id_playlist', playlistId)
-      .order('ordem', { ascending: true });
+    try {
+      const token = await getToken();
+      const response = await fetch(`/api/playlists/${playlistId}/videos`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (error || !playlistVideos) {
-      alert('Erro ao carregar vídeos da playlist');
-      return;
+      if (!response.ok) {
+        toast.error('Erro ao carregar vídeos da playlist');
+        return;
+      }
+
+      const playlistVideos = await response.json();
+      const videos: Video[] = playlistVideos.map((item: any) => item.videos);
+      
+      setPlaylistVideosToPlay(videos);
+      setPlaylistPlayerIndex(0);
+      setVideoPlayerModalOpen(true);
+    } catch (error) {
+      console.error('Erro ao carregar playlist:', error);
+      toast.error('Erro ao carregar vídeos da playlist');
     }
-
-    const videos: Video[] = playlistVideos.map((item) => (item as any).videos);
-    setPlaylistVideosToPlay(videos);
-    setPlaylistPlayerIndex(0);
-    setVideoPlayerModalOpen(true);
   };
 
   useEffect(() => {

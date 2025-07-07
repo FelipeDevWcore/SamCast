@@ -3,9 +3,9 @@ import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { format, isSameDay, parseISO } from 'date-fns';
 import { FiCalendar, FiPlus, FiX, FiVideo } from 'react-icons/fi';
-import { supabase } from '../../lib/supabase';
 import { toast } from "react-toastify";
 import { isAfter, isBefore } from 'date-fns';
+import { useAuth } from '../../context/AuthContext';
 
 type Playlist = {
     id: string;
@@ -32,6 +32,7 @@ type ModalData =
     | null;
 
 export default function CalendarioAvancado() {
+    const { getToken } = useAuth();
     const [playlists, setPlaylists] = useState<Playlist[]>([]);
     const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
     const [selectedDate, setSelectedDate] = useState(new Date());
@@ -51,10 +52,7 @@ export default function CalendarioAvancado() {
 
     async function fetchPlaylists() {
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getToken();
             if (!token) {
                 throw new Error('Usuário não autenticado');
             }
@@ -75,10 +73,7 @@ export default function CalendarioAvancado() {
 
     async function fetchAgendamentos(date: Date) {
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getToken();
             if (!token) {
                 throw new Error('Usuário não autenticado');
             }
@@ -140,7 +135,6 @@ export default function CalendarioAvancado() {
         }
         return agendamento.frequencia;
     }
-
 
     const agendamentosFiltrados = agendamentos.filter(ag => {
         const dataAg = parseISO(ag.data);
@@ -262,7 +256,6 @@ export default function CalendarioAvancado() {
                         <thead className="bg-gray-100">
                             <tr>
                                 <th className="px-4 py-2 border-b">ID</th>
-                                {/* Removido a coluna Data */}
                                 <th className="px-4 py-2 border-b">Playlist</th>
                                 <th className="px-4 py-2 border-b">Misturado</th>
                                 <th className="px-4 py-2 border-b">Frequência</th>
@@ -278,8 +271,6 @@ export default function CalendarioAvancado() {
                                     onClick={() => setModalData({ type: 'view', agendamento: ag })}
                                 >
                                     <td className="px-4 py-2 border-b">{ag.id}</td>
-                                    {/* removida a célula data */}
-
                                     <td className="px-4 py-2 border-b">
                                         {ag.nome_playlist_principal ?? ag.id_playlist}
                                     </td>
@@ -313,9 +304,6 @@ export default function CalendarioAvancado() {
                             Agendamento #{modalData.agendamento.id}
                         </h2>
                         <div className="space-y-2 text-gray-800">
-
-                            {/* Removi o campo Data conforme solicitado */}
-
                             <p>
                                 <strong>Playlist ID:</strong> {modalData.agendamento.id_playlist}
                             </p>
@@ -409,6 +397,7 @@ function NovoAgendamentoForm({
     dataSelecionada,
     onClose,
 }: NovoAgendamentoFormProps) {
+    const { getToken } = useAuth();
     const [playlistId, setPlaylistId] = useState('');
     const [shuffle, setShuffle] = useState<'sim' | 'nao'>('nao');
     const [frequencia, setFrequencia] = useState<
@@ -435,18 +424,11 @@ function NovoAgendamentoForm({
             return;
         }
 
-        // Obter token do usuário logado
-        const {
-            data: { session },
-            error: sessionError
-        } = await supabase.auth.getSession();
-
-        if (sessionError || !session) {
+        const token = await getToken();
+        if (!token) {
             toast.error('Você precisa estar autenticado para criar um agendamento');
             return;
         }
-
-        const token = session.access_token;
 
         // Map para transformar o valor do select para o formato aceito no banco
         const frequenciaMap = {
@@ -462,16 +444,16 @@ function NovoAgendamentoForm({
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`, // token na requisição
+                    'Authorization': `Bearer ${token}`,
                 },
                 body: JSON.stringify({
                     data: inicioData,
                     id_playlist: playlistId,
-                    shuffle: shuffle === 'sim', // boolean
-                    frequencia: frequenciaMap[frequencia], // converte para formato aceito
-                    finalizacao: !!playlistFinalizacaoId, // boolean true/false
+                    shuffle: shuffle === 'sim',
+                    frequencia: frequenciaMap[frequencia],
+                    finalizacao: !!playlistFinalizacaoId,
                     id_playlist_finalizacao: playlistFinalizacaoId || null,
-                    inicio: dataHoraInicio, // data + hora completa em formato ISO básico
+                    inicio: dataHoraInicio,
                     dias_semana: frequencia === 'Dias da Semana' ? diasSemana : undefined,
                 }),
             });
@@ -484,6 +466,7 @@ function NovoAgendamentoForm({
             console.error(error);
         }
     }
+
     return (
         <form
             onSubmit={handleSubmit}

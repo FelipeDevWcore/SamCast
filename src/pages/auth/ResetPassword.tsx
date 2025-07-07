@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 
@@ -15,19 +14,30 @@ const ResetPassword: React.FC = () => {
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
-    async function exchangeCode() {
+    async function validateToken() {
       const access_token = searchParams.get('access_token');
       if (!access_token) {
         setMessage('Token de acesso não encontrado na URL.');
         return;
       }
 
-      const { error } = await supabase.auth.exchangeCodeForSession(access_token);
-      if (error) {
-        setMessage('Erro ao validar token: ' + error.message);
+      try {
+        const response = await fetch('/api/auth/validate-reset-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token: access_token }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Token inválido ou expirado');
+        }
+      } catch (error) {
+        setMessage('Erro ao validar token: ' + (error as Error).message);
       }
     }
-    exchangeCode();
+    validateToken();
   }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -55,14 +65,30 @@ const ResetPassword: React.FC = () => {
     }
 
     setIsLoading(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    setIsLoading(false);
+    
+    try {
+      const access_token = searchParams.get('access_token');
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          token: access_token,
+          password 
+        }),
+      });
 
-    if (error) {
-      setMessage(`Erro: ${error.message}`);
-    } else {
+      if (!response.ok) {
+        throw new Error('Erro ao redefinir senha');
+      }
+
       setMessage('Senha alterada com sucesso! Redirecionando para login...');
       setTimeout(() => navigate('/login'), 3000);
+    } catch (error) {
+      setMessage(`Erro: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 

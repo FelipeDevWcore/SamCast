@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const ConfirmEmail: React.FC = () => {
@@ -21,16 +20,26 @@ const ConfirmEmail: React.FC = () => {
         return;
       }
 
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      try {
+        const response = await fetch('/api/auth/confirm-email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ code }),
+        });
 
-      if (error) {
-        setMessage(`Erro ao confirmar email: ${error.message}`);
-        setIsLoading(false);
-        setTimeout(() => navigate('/login'), 5000);
-      } else {
+        if (!response.ok) {
+          throw new Error('Erro ao confirmar email');
+        }
+
         setMessage('Email confirmado com sucesso! Você será redirecionado para o login.');
         setIsLoading(false);
         setTimeout(() => navigate('/login'), 3000);
+      } catch (error) {
+        setMessage(`Erro ao confirmar email: ${(error as Error).message}`);
+        setIsLoading(false);
+        setTimeout(() => navigate('/login'), 5000);
       }
     }
 

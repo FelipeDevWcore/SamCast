@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const AuthCallback: React.FC = () => {
@@ -17,22 +16,32 @@ const AuthCallback: React.FC = () => {
         return;
       }
 
-      const { error } = await supabase.auth.exchangeCodeForSession(access_token);
+      // Validar token com o backend
+      try {
+        const response = await fetch('/api/auth/validate-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token: access_token }),
+        });
 
-      if (error) {
-        alert('Erro ao validar token: ' + error.message);
-        navigate('/login');
-        return;
-      }
+        if (!response.ok) {
+          throw new Error('Token inválido');
+        }
 
-      if (type === 'recovery') {
-        // Redireciona para a página de reset de senha, onde o usuário vai escolher nova senha
-        navigate('/reset-password');
-      } else if (type === 'signup') {
-        alert('Email confirmado com sucesso! Você já pode fazer login.');
-        navigate('/login');
-      } else {
-        // Outros tipos ou padrão: redirecionar para login
+        if (type === 'recovery') {
+          // Redireciona para a página de reset de senha
+          navigate('/reset-password');
+        } else if (type === 'signup') {
+          alert('Email confirmado com sucesso! Você já pode fazer login.');
+          navigate('/login');
+        } else {
+          // Outros tipos ou padrão: redirecionar para login
+          navigate('/login');
+        }
+      } catch (error) {
+        alert('Erro ao validar token: ' + (error as Error).message);
         navigate('/login');
       }
     }
