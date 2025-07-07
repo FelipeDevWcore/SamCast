@@ -7,10 +7,7 @@ const dbConfig = {
   password: 'Adr1an@',
   database: 'db_SamCast',
   charset: 'utf8mb4',
-  timezone: '+00:00',
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
+  timezone: '+00:00'
 };
 
 // Pool de conexões
